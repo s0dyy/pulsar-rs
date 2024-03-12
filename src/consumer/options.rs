@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+
 use crate::{
     consumer::initial_position::InitialPosition,
     message::proto::{MessageIdData, Schema},
@@ -16,6 +17,7 @@ pub struct ConsumerOptions {
     /// marked-delete position on the particular message id and
     /// will send messages from that point
     pub start_message_id: Option<MessageIdData>,
+    pub start_message_id_inclusive: Option<bool>,
     /// Add optional metadata key=value to this consumer
     pub metadata: BTreeMap<String, String>,
     pub read_compacted: Option<bool>,
@@ -50,6 +52,12 @@ impl ConsumerOptions {
     #[cfg_attr(feature = "telemetry", tracing::instrument(skip_all))]
     pub fn starting_on_message(mut self, message_id_data: MessageIdData) -> Self {
         self.start_message_id = Some(message_id_data);
+        self
+    }
+
+    #[cfg_attr(feature = "telemetry", tracing::instrument(skip_all))]
+    pub fn start_message_id_inclusive(mut self, start_message_id_inclusive: bool) -> Self {
+        self.start_message_id_inclusive = Some(start_message_id_inclusive);
         self
     }
 

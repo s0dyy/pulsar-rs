@@ -307,6 +307,12 @@ impl<T: DeserializeMessage, Exe: Executor> TopicConsumer<T, Exe> {
     }
 
     #[cfg_attr(feature = "telemetry", tracing::instrument(skip_all))]
+    fn is_same_entry(&self, message_id: &MessageIdData) -> bool {
+        message_id.ledger_id == self.config.options.start_message_id.clone().unwrap().ledger_id &&
+            message_id.entry_id == self.config.options.start_message_id.clone().unwrap().entry_id
+    }
+
+    #[cfg_attr(feature = "telemetry", tracing::instrument(skip_all))]
     pub(crate) async fn get_schema(
         &mut self,
         version: Option<Vec<u8>>,
@@ -322,15 +328,26 @@ impl<T: DeserializeMessage, Exe: Executor> Stream for TopicConsumer<T, Exe> {
 
     #[cfg_attr(feature = "telemetry", tracing::instrument(skip_all))]
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match self.messages.as_mut().poll_next(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(None) => Poll::Ready(None),
-            Poll::Ready(Some(Ok((id, payload)))) => {
-                self.last_message_received = Some(Utc::now());
-                self.messages_received += 1;
-                Poll::Ready(Some(Ok(self.create_message(id, payload))))
+        loop {
+            match self.messages.as_mut().poll_next(cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(None) => return Poll::Ready(None),
+                Poll::Ready(Some(Ok((id, payload)))) => {
+                    match self.config.options.start_message_id_inclusive {
+                        Some(true) => {
+                            // TODO: persistent / batch
+                            if self.is_same_entry(&id) {
+                                continue
+                            }
+                        }
+                        _ => {}
+                    }
+                    self.last_message_received = Some(Utc::now());
+                    self.messages_received += 1;
+                    return Poll::Ready(Some(Ok(self.create_message(id, payload))));
+                }
+                Poll::Ready(Some(Err(e))) => return Poll::Ready(Some(Err(e)))
             }
-            Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e))),
         }
     }
 }
