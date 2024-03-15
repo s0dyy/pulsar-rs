@@ -305,6 +305,14 @@ impl<T: DeserializeMessage, Exe: Executor> TopicConsumer<T, Exe> {
             _phantom: PhantomData,
         }
     }
+
+    #[cfg_attr(feature = "telemetry", tracing::instrument(skip_all))]
+    fn is_same_entry(&self, message_id: &MessageIdData) -> bool {
+        self.config.options.start_message_id.as_ref().map(|start_message_id| 
+            message_id.ledger_id == start_message_id.ledger_id &&
+                message_id.entry_id == start_message_id.entry_id
+        ).unwrap_or(false)
+    }
 }
 
 impl<T: DeserializeMessage, Exe: Executor> Stream for TopicConsumer<T, Exe> {
@@ -312,15 +320,23 @@ impl<T: DeserializeMessage, Exe: Executor> Stream for TopicConsumer<T, Exe> {
 
     #[cfg_attr(feature = "telemetry", tracing::instrument(skip_all))]
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match self.messages.as_mut().poll_next(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(None) => Poll::Ready(None),
-            Poll::Ready(Some(Ok((id, payload)))) => {
-                self.last_message_received = Some(Utc::now());
-                self.messages_received += 1;
-                Poll::Ready(Some(Ok(self.create_message(id, payload))))
+        loop {
+            match self.messages.as_mut().poll_next(cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(None) => return Poll::Ready(None),
+                Poll::Ready(Some(Ok((id, payload)))) => {
+                    if let Some(true) = self.config.options.start_message_id_inclusive {
+                        if self.is_same_entry(&id) {
+                            continue
+                        }
+                    }
+                    self.last_message_received = Some(Utc::now());
+                    self.messages_received += 1;
+
+                    return Poll::Ready(Some(Ok(self.create_message(id, payload))));
+                }
+                Poll::Ready(Some(Err(e))) => return Poll::Ready(Some(Err(e)))
             }
-            Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e))),
         }
     }
 }
